@@ -1,0 +1,68 @@
+# Dygnsförankringen — läggs som .github/workflows/anchor.yml i det PUBLIKA
+# repot VOEB-afk/boatdocked-anchors (se README.md i denna katalog).
+# Committen av rotfilen ÄR publiceringen: skyddad main, aldrig force-push.
+name: Dygnsrot
+
+on:
+  schedule:
+    - cron: '0 4 * * *'   # 04:00 UTC ≈ 06:00 svensk sommartid
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  anchor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Begär dygnets rot
+        id: rot
+        run: |
+          svar=$(curl -sS -X POST "https://www.boatdocked.com/api/cron/anchor" \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" -d '{}')
+          echo "$svar"
+          # 409 = LARMLÄGE: kedjan är bruten, ingen rot präglas. Jobbet ska
+          # falla högt — det är hela poängen.
+          if echo "$svar" | grep -q '"larm"'; then
+            echo "::error::Kedjan är bruten — ingen rot publiceras. Utred INNAN nästa körning."
+            exit 1
+          fi
+          if echo "$svar" | grep -q '"tom": *true'; then
+            echo "Inga signerade poster ännu — inget att publicera."
+            echo "tom=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          datum=$(echo "$svar" | python3 -c "import sys,json; print(json.load(sys.stdin)['anchor_date'])")
+          echo "datum=$datum" >> "$GITHUB_OUTPUT"
+          mkdir -p anchors
+          echo "$svar" | python3 -m json.tool > "anchors/$datum.json"
+
+      - name: Hämta RFC 3161-kvittot
+        if: steps.rot.outputs.tom != 'true'
+        run: |
+          datum="${{ steps.rot.outputs.datum }}"
+          # Kvittot kan vara 'vantar' om freetsa inte svarade — det
+          # kompletteras av nästa dygnskörning; roten är redan präglad.
+          curl -sS -f -o "anchors/$datum.tsr" \
+            "https://www.boatdocked.com/api/anchors/$datum/tsr" || true
+
+      - name: OpenTimestamps-stämpla rotfilen
+        if: steps.rot.outputs.tom != 'true'
+        run: |
+          pip install --quiet opentimestamps-client
+          datum="${{ steps.rot.outputs.datum }}"
+          ots stamp "anchors/$datum.json" || true
+
+      - name: Committa — committen är publiceringen
+        if: steps.rot.outputs.tom != 'true'
+        run: |
+          datum="${{ steps.rot.outputs.datum }}"
+          git config user.name "boatdocked-anchor-bot"
+          git config user.email "anchors@boatdocked.com"
+          git add "anchors/$datum".*
+          git diff --cached --quiet && { echo "Roten är redan publicerad."; exit 0; }
+          git commit -m "Dygnsrot $datum"
+          git push
