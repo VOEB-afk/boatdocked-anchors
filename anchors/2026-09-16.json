@@ -1,0 +1,12 @@
+{
+    "anchor_date": "2026-09-16",
+    "merkle_root": "873d0f77c6f2c0197efe7cee44c82970e92fab04fab5b04154919e8af8ae7ef2",
+    "boat_count": 1,
+    "event_count": 0,
+    "doc_count": 4,
+    "tsr_status": "klar",
+    "kvitton": {
+        "provade": 0,
+        "klara": 0
+    }
+}
